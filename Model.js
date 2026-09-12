@@ -55,7 +55,6 @@ function levelFraction(level) {
 
 function podMeta(pod) {
   if (!pod || pod.level === LEVEL_UNKNOWN) return ""
-  if (pod.lastKnown) return pod.charging ? "Charging · Last known" : "Last known"
   if (pod.charging) return "Charging"
   if (pod.inCase) return "In case"
   if (pod.inEar) return "In ear"
