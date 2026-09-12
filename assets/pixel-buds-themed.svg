@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" fill="none">
+  <!-- Solid Filled Pebble Case Body -->
+  <path fill="currentColor" d="M38 84 C38 79 42 75 47 75 L145 75 C150 75 154 79 154 84 L154 113 C154 146 128 172 96 172 C64 172 38 146 38 113 Z"/>
+  <!-- Open Arched Lid and Unfilled Earbuds -->
+  <path stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" d="M46 62 C46 32 68 18 96 18 C124 18 146 32 146 62 M48 77 C46 73 45 69 45 65 C45 54 54 45 65 45 C76 45 85 54 85 65 C85 69 84 73 82 77 M110 77 C108 73 107 69 107 65 C107 54 116 45 127 45 C138 45 147 54 147 65 C147 69 146 73 144 77"/>
+</svg>

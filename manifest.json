@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "dan.pixel-buds",
+  "name": "Pixel Buds",
+  "version": "1.0.0",
+  "author": "Daniel",
+  "description": "Google Pixel Buds Pro 2 battery, ANC modes, conversation awareness, and controls",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Pixel Buds",
+    "description": "Battery, ANC, conversation awareness, and find for Google Pixel Buds Pro 2",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "hideWhenDisconnected": true
+    },
+    "schema": [
+      {
+        "key": "hideWhenDisconnected",
+        "type": "boolean",
+        "label": "Hide the icon when no buds are connected",
+        "defaultValue": true
+      }
+    ]
+  }
+}

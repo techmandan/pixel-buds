@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")" && pwd)"
+
+# Build release binary and place in bin/
+cargo build --release --manifest-path "$root/Cargo.toml"
+mkdir -p "$root/bin"
+cp "$root/target/release/pixel-buds" "$root/bin/pixel-buds"
+chmod +x "$root/bin/pixel-buds" "$root/setup"
+
+install -Dm644 "$root/systemd/dan-pixel-buds.service" \
+  "${HOME}/.config/systemd/user/dan-pixel-buds.service"
+
+systemctl --user daemon-reload
+systemctl --user enable --now dan-pixel-buds.service
+
+# Populate initial status
+"$root/bin/pixel-buds" poll >/dev/null 2>&1 || true
+
+# Rescan shell plugins
+omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+
+echo "Pixel Buds Pro 2 Rust plugin setup complete and service running."

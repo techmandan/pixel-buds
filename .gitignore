@@ -1,0 +1,7 @@
+/target
+/bin
+*.tmp
+*.log
+*.wav
+*.pid
+.DS_Store
