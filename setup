@@ -6,14 +6,16 @@ root="$(cd "$(dirname "$0")" && pwd)"
 # Build release binary and place in bin/
 cargo build --release --manifest-path "$root/Cargo.toml"
 mkdir -p "$root/bin"
-cp "$root/target/release/pixel-buds" "$root/bin/pixel-buds"
+install -Dm755 "$root/target/release/pixel-buds" "$root/bin/pixel-buds"
 chmod +x "$root/bin/pixel-buds" "$root/setup"
 
-install -Dm644 "$root/systemd/dan-pixel-buds.service" \
-  "${HOME}/.config/systemd/user/dan-pixel-buds.service"
+install -Dm644 "$root/systemd/pixel-buds.service" \
+  "${HOME}/.config/systemd/user/pixel-buds.service"
 
 systemctl --user daemon-reload
-systemctl --user enable --now dan-pixel-buds.service
+systemctl --user enable --now mpris-proxy.service >/dev/null 2>&1 || true
+systemctl --user enable pixel-buds.service
+systemctl --user restart pixel-buds.service
 
 # Populate initial status
 "$root/bin/pixel-buds" poll >/dev/null 2>&1 || true

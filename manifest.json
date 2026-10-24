@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "dan.pixel-buds",
+  "id": "pixel-buds",
   "name": "Pixel Buds",
   "version": "1.0.0",
   "author": "Daniel",
+  "license": "MIT",
   "description": "Google Pixel Buds Pro 2 battery, ANC modes, conversation awareness, and controls",
   "kinds": [
     "bar-widget"

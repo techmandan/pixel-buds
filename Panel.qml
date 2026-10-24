@@ -9,7 +9,7 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "dan.pixel-buds"
+  moduleName: "pixel-buds"
   ipcTarget: "pixel-buds"
 
   property int cursorIndex: 0
@@ -129,9 +129,18 @@ Panel {
         }
       }
     }
-    tooltipText: service.connected
-      ? (service.deviceName + " (" + (service.leftPod.level >= 0 ? service.leftPod.level + "% · " : "") + (service.caseBattery.level >= 0 ? "Case " + service.caseBattery.level + "% · " : "") + Model.noiseModeName(service.noiseMode) + ")")
-      : "Pixel Buds Pro 2 (Disconnected)"
+    tooltipText: {
+      if (!service.connected) return "Pixel Buds Pro 2 (Disconnected)"
+      var parts = [service.deviceName, " ("]
+      if (service.leftPod.level >= 0) parts.push(service.leftPod.level + "% · ")
+      if (service.caseBattery.level >= 0 && !service.caseBattery.stale) {
+        var caseText = "Case " + service.caseBattery.level + "%"
+        if (service.caseBattery.lastKnown) caseText += " (cached)"
+        parts.push(caseText + " · ")
+      }
+      parts.push(Model.noiseModeName(service.noiseMode) + ")")
+      return parts.join("")
+    }
     onPressed: function (b) {
       if (b === Qt.RightButton) service.cycleNoiseMode()
       else root.toggle()
@@ -437,6 +446,7 @@ Panel {
     property var pod: Model.defaultPod()
     property string meta: ""
 
+    readonly property bool isLastKnown: pod && pod.lastKnown === true
     readonly property string metaText: meta !== "" ? meta : Model.podMeta(pod)
     readonly property bool low: pod && pod.level !== Model.LEVEL_UNKNOWN
       && pod.level <= root.lowBatteryPercent && !pod.charging
@@ -470,13 +480,15 @@ Panel {
           width: meterTrack.width * Model.levelFraction(podRow.pod ? podRow.pod.level : Model.LEVEL_UNKNOWN)
           height: parent.height
           radius: parent.radius
-          color: podRow.low ? root.urgent : Color.accent
+          color: podRow.low ? root.urgent : (podRow.isLastKnown ? Qt.lighter(Color.accent, 1.1) : Color.accent)
+          opacity: podRow.isLastKnown ? 0.75 : 1.0
         }
       }
 
       Text {
         text: Model.levelText(podRow.pod ? podRow.pod.level : Model.LEVEL_UNKNOWN)
         color: root.foreground
+        opacity: podRow.isLastKnown ? 0.85 : 1.0
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         horizontalAlignment: Text.AlignRight
@@ -489,7 +501,7 @@ Panel {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         elide: Text.ElideRight
-        Layout.preferredWidth: Math.max(Style.space(85), implicitWidth)
+        Layout.preferredWidth: Math.max(Style.space(110), implicitWidth)
       }
     }
   }

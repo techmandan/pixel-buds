@@ -1,12 +1,13 @@
 mod daemon;
 mod find;
 mod lock;
+mod media;
 mod pbp;
 mod types;
 
 use clap::{Parser, Subcommand};
-use anyhow::Result;
-use daemon::Daemon;
+use anyhow::{bail, Result};
+use daemon::{Daemon, DaemonRequest};
 use find::Finder;
 
 #[derive(Parser)]
@@ -60,36 +61,70 @@ fn main() -> Result<()> {
         Some(Commands::Set { target, value }) => {
             let target_lower = target.to_lowercase();
             if target_lower == "anc" {
-                daemon.client().set_anc(&value)?;
-                if let Some(mut curr) = daemon.read_status_file() {
-                    curr.noise_mode = value.to_lowercase();
-                    let _ = daemon.write_status(&curr);
+                match daemon.send_request(&DaemonRequest::SetAnc { value: value.clone() }) {
+                    Ok(resp) if resp.ok => {
+                        println!("ANC set to {}", value);
+                    }
+                    Ok(resp) => {
+                        bail!("{}", resp.error.unwrap_or_else(|| "Failed to set ANC".to_string()));
+                    }
+                    Err(_) => {
+                        daemon.client().set_anc(&value)?;
+                        if let Some(mut curr) = daemon.read_status_file() {
+                            curr.noise_mode = value.to_lowercase();
+                            let _ = daemon.write_status(&curr);
+                        }
+                        println!("ANC set to {}", value);
+                    }
                 }
-                println!("ANC set to {}", value);
             } else {
                 let val_bool = matches!(value.to_lowercase().as_str(), "true" | "1" | "yes" | "on");
-                daemon.client().set_setting(&target, val_bool)?;
-                if let Some(mut curr) = daemon.read_status_file() {
-                    match target.replace('-', "_").as_str() {
-                        "speech_detection" => curr.settings.speech_detection = val_bool,
-                        "ohd" => curr.settings.ohd = val_bool,
-                        "multipoint" => curr.settings.multipoint = val_bool,
-                        "gestures" => curr.settings.gestures = val_bool,
-                        "volume_eq" => curr.settings.volume_eq = val_bool,
-                        _ => {}
+                match daemon.send_request(&DaemonRequest::SetSetting {
+                    key: target.clone(),
+                    value: val_bool,
+                }) {
+                    Ok(resp) if resp.ok => {
+                        println!("Set {} to {}", target, val_bool);
                     }
-                    let _ = daemon.write_status(&curr);
+                    Ok(resp) => {
+                        bail!("{}", resp.error.unwrap_or_else(|| format!("Failed to set {}", target)));
+                    }
+                    Err(_) => {
+                        daemon.client().set_setting(&target, val_bool)?;
+                        if let Some(mut curr) = daemon.read_status_file() {
+                            match target.replace('-', "_").as_str() {
+                                "speech_detection" => curr.settings.speech_detection = val_bool,
+                                "ohd" => curr.settings.ohd = val_bool,
+                                "multipoint" => curr.settings.multipoint = val_bool,
+                                "gestures" => curr.settings.gestures = val_bool,
+                                "volume_eq" => curr.settings.volume_eq = val_bool,
+                                _ => {}
+                            }
+                            let _ = daemon.write_status(&curr);
+                        }
+                        println!("Set {} to {}", target, val_bool);
+                    }
                 }
-                println!("Set {} to {}", target, val_bool);
             }
         }
         Some(Commands::CycleAnc) => {
-            let new_mode = daemon.client().cycle_anc()?;
-            if let Some(mut curr) = daemon.read_status_file() {
-                curr.noise_mode = new_mode.clone();
-                let _ = daemon.write_status(&curr);
+            match daemon.send_request(&DaemonRequest::CycleAnc) {
+                Ok(resp) if resp.ok => {
+                    let new_mode = resp.mode.unwrap_or_else(|| "active".to_string());
+                    println!("ANC cycled to {}", new_mode);
+                }
+                Ok(resp) => {
+                    bail!("{}", resp.error.unwrap_or_else(|| "Failed to cycle ANC".to_string()));
+                }
+                Err(_) => {
+                    let new_mode = daemon.client().cycle_anc()?;
+                    if let Some(mut curr) = daemon.read_status_file() {
+                        curr.noise_mode = new_mode.clone();
+                        let _ = daemon.write_status(&curr);
+                    }
+                    println!("ANC cycled to {}", new_mode);
+                }
             }
-            println!("ANC cycled to {}", new_mode);
         }
         Some(Commands::Find { side }) => {
             let finder = Finder::new();

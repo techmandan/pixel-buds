@@ -1,8 +1,33 @@
+use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use anyhow::{bail, Context, Result};
 use crate::lock::FileLock;
 use crate::types::{BatteryInfo, CaseBattery, CaseCache, PodBattery, SettingsInfo};
+
+pub fn user_home_dir() -> PathBuf {
+    if let Some(home) = std::env::var_os("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home);
+        }
+    }
+    unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        if !pw.is_null() && !(*pw).pw_dir.is_null() {
+            if let Ok(dir) = CStr::from_ptr((*pw).pw_dir).to_str() {
+                if !dir.is_empty() {
+                    return PathBuf::from(dir);
+                }
+            }
+        }
+    }
+    if let Ok(user) = std::env::var("USER") {
+        if !user.is_empty() {
+            return PathBuf::from("/home").join(user);
+        }
+    }
+    PathBuf::from(".")
+}
 
 pub struct PbpClient {
     pbpctrl_bin: PathBuf,
@@ -13,10 +38,7 @@ pub struct PbpClient {
 impl PbpClient {
     pub fn new(state_dir: &Path) -> Self {
         let pbpctrl_bin = which::which("pbpctrl")
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/home/dan".to_string());
-                PathBuf::from(home).join(".cargo/bin/pbpctrl")
-            });
+            .unwrap_or_else(|_| user_home_dir().join(".cargo/bin/pbpctrl"));
 
         let lock_path = state_dir.join("pixel-buds.lock");
         let case_cache_path = state_dir.join("case_cache.json");
@@ -34,6 +56,39 @@ impl PbpClient {
         }
         let data = std::fs::read_to_string(&self.case_cache_path).ok()?;
         serde_json::from_str(&data).ok()
+    }
+
+    pub const CASE_CACHE_MAX_AGE_SECS: u64 = 4 * 3600; // 4 hours
+
+    pub fn resolve_cached_case(&self, now: u64) -> CaseBattery {
+        if let Some(cached) = self.load_case_cache() {
+            let age = now.saturating_sub(cached.timestamp);
+            if cached.level >= 0 && age < Self::CASE_CACHE_MAX_AGE_SECS {
+                CaseBattery {
+                    level: cached.level,
+                    charging: cached.charging,
+                    last_known: true,
+                    timestamp: cached.timestamp,
+                    stale: false,
+                }
+            } else {
+                CaseBattery {
+                    level: -1,
+                    charging: false,
+                    last_known: true,
+                    timestamp: cached.timestamp,
+                    stale: true,
+                }
+            }
+        } else {
+            CaseBattery {
+                level: -1,
+                charging: false,
+                last_known: false,
+                timestamp: 0,
+                stale: false,
+            }
+        }
     }
 
     pub fn save_case_cache(&self, level: i32, charging: bool) {
@@ -183,15 +238,18 @@ impl PbpClient {
             }
         }
 
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         if case.level >= 0 {
             self.save_case_cache(case.level, case.charging);
             case.last_known = false;
-        } else if let Some(cached) = self.load_case_cache() {
-            if cached.level >= 0 {
-                case.level = cached.level;
-                case.charging = cached.charging;
-                case.last_known = true;
-            }
+            case.timestamp = now;
+            case.stale = false;
+        } else {
+            case = self.resolve_cached_case(now);
         }
 
         BatteryInfo {
@@ -206,15 +264,18 @@ impl PbpClient {
         let (runtime_out, rc) = self.run_locked(&["show", "runtime"])?;
         let combined = self.get_bluez_battery(mac).unwrap_or(-1);
 
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         let (battery, noise_mode, settings) = if rc != 0 {
-            let cached_case = self.load_case_cache();
-            let case_lvl = cached_case.as_ref().map(|c| c.level).unwrap_or(-1);
-            let case_chg = cached_case.as_ref().map(|c| c.charging).unwrap_or(false);
+            let case = self.resolve_cached_case(now);
 
             let batt = BatteryInfo {
                 left: PodBattery { level: combined, charging: false, in_ear: true, in_case: false },
                 right: PodBattery { level: combined, charging: false, in_ear: true, in_case: false },
-                case: CaseBattery { level: case_lvl, charging: case_chg, last_known: true },
+                case,
                 combined,
             };
 
@@ -280,14 +341,12 @@ impl PbpClient {
     }
 
     pub fn disconnected_status(&self) -> crate::types::PluginStatus {
-        let cached_case = self.load_case_cache();
-        let case_lvl = cached_case.as_ref().map(|c| c.level).unwrap_or(-1);
-        let case_chg = cached_case.as_ref().map(|c| c.charging).unwrap_or(false);
-
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+
+        let case = self.resolve_cached_case(now);
 
         crate::types::PluginStatus {
             ok: true,
@@ -298,11 +357,7 @@ impl PbpClient {
             battery: BatteryInfo {
                 left: PodBattery::default(),
                 right: PodBattery::default(),
-                case: CaseBattery {
-                    level: case_lvl,
-                    charging: case_chg,
-                    last_known: true,
-                },
+                case,
                 combined: -1,
             },
             noise_mode: "off".to_string(),

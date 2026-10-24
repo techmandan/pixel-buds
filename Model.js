@@ -23,7 +23,7 @@ function defaultStatus() {
     mac: "",
     left: defaultPod(),
     right: defaultPod(),
-    caseBattery: { level: LEVEL_UNKNOWN, charging: false, lastKnown: false },
+    caseBattery: { level: LEVEL_UNKNOWN, charging: false, lastKnown: false, timestamp: 0, stale: false },
     combinedBattery: LEVEL_UNKNOWN,
     noiseMode: NOISE_UNKNOWN,
     settings: {
@@ -43,6 +43,19 @@ function noiseModeName(mode) {
   return "Unknown"
 }
 
+function formatTimeAgo(timestampSecs) {
+  if (!timestampSecs || timestampSecs <= 0) return ""
+  var nowSecs = Math.floor(Date.now() / 1000)
+  var diff = Math.max(0, nowSecs - timestampSecs)
+  if (diff < 60) return "just now"
+  var mins = Math.floor(diff / 60)
+  if (mins < 60) return mins + "m ago"
+  var hours = Math.floor(mins / 60)
+  if (hours < 24) return hours + "h ago"
+  var days = Math.floor(hours / 24)
+  return days + "d ago"
+}
+
 function levelText(level) {
   if (level === undefined || level === null || level < 0) return "--"
   return level + "%"
@@ -55,10 +68,15 @@ function levelFraction(level) {
 
 function podMeta(pod) {
   if (!pod || pod.level === LEVEL_UNKNOWN) return ""
+  if (pod.lastKnown) {
+    var timeStr = formatTimeAgo(pod.timestamp)
+    var label = timeStr ? "Last known · " + timeStr : "Last known"
+    return pod.charging ? "Charging · " + label : label
+  }
   if (pod.charging) return "Charging"
   if (pod.inCase) return "In case"
   if (pod.inEar) return "In ear"
-  return ""
+  return "Out of ear"
 }
 
 function parseStatus(raw) {
@@ -93,6 +111,8 @@ function parseStatus(raw) {
         status.caseBattery.level = data.battery.case.level !== undefined ? data.battery.case.level : LEVEL_UNKNOWN
         status.caseBattery.charging = data.battery.case.charging === true
         status.caseBattery.lastKnown = data.battery.case.last_known === true
+        status.caseBattery.timestamp = data.battery.case.timestamp || 0
+        status.caseBattery.stale = data.battery.case.stale === true
       }
       if (data.battery.combined !== undefined) {
         status.combinedBattery = data.battery.combined

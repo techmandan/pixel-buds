@@ -24,6 +24,8 @@ pub struct CaseBattery {
     pub level: i32,
     pub charging: bool,
     pub last_known: bool,
+    pub timestamp: u64,
+    pub stale: bool,
 }
 
 impl Default for CaseBattery {
@@ -32,6 +34,8 @@ impl Default for CaseBattery {
             level: -1,
             charging: false,
             last_known: false,
+            timestamp: 0,
+            stale: false,
         }
     }
 }

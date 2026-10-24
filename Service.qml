@@ -15,7 +15,7 @@ Item {
 
   property var leftPod: Model.defaultPod()
   property var rightPod: Model.defaultPod()
-  property var caseBattery: ({ level: Model.LEVEL_UNKNOWN, charging: false, lastKnown: false })
+  property var caseBattery: ({ level: Model.LEVEL_UNKNOWN, charging: false, lastKnown: false, timestamp: 0, stale: false })
   property int combinedBattery: Model.LEVEL_UNKNOWN
 
   property string noiseMode: Model.NOISE_ANC
@@ -29,6 +29,7 @@ Item {
   property string lastError: ""
   property string actionStatus: ""
   property string findingSide: ""
+  property bool bootstrapped: false
 
   readonly property bool hasDevice: connected
   readonly property bool finding: findingSide !== ""
@@ -58,6 +59,9 @@ Item {
 
   function refresh() {
     stateFile.reload()
+    if (connected && !commandProcess.running && !pollProcess.running) {
+      pollProcess.running = true
+    }
   }
 
   function applyLine(raw) {
@@ -97,6 +101,10 @@ Item {
     daemonReachable = false
     connected = false
     lastError = ""
+    if (!bootstrapped && !bootstrapProcess.running) {
+      bootstrapped = true
+      bootstrapProcess.running = true
+    }
   }
 
   function setNoiseMode(mode) {
@@ -204,5 +212,23 @@ Item {
     id: stopProcess
     running: false
     command: []
+  }
+
+  Process {
+    id: pollProcess
+    running: false
+    command: [bridge, "poll"]
+    onExited: function (exitCode) {
+      stateFile.reload()
+    }
+  }
+
+  Process {
+    id: bootstrapProcess
+    running: false
+    command: [root.pluginDir + "/setup"]
+    onExited: function (exitCode) {
+      stateFile.reload()
+    }
   }
 }

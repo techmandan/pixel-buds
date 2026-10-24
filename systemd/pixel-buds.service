@@ -1,11 +1,12 @@
 [Unit]
 Description=Pixel Buds Pro 2 status bridge for the Omarchy bar
 After=bluetooth.service
+Wants=mpris-proxy.service
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.config/omarchy/plugins/dan.pixel-buds/bin/pixel-buds daemon
+ExecStart=%h/.config/omarchy/plugins/pixel-buds/bin/pixel-buds daemon
 Restart=always
 RestartSec=3
 Environment=PATH=%h/.cargo/bin:%h/.local/bin:/usr/bin
