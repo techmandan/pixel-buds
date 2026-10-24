@@ -17,8 +17,6 @@ A native system integration plugin for Google Pixel Buds Pro 2 on Omarchy / Quic
 - **BlueZ (`bluetooth.service` and `mpris-proxy.service`)** for Bluetooth RFCOMM and AVRCP media status
 - **PipeWire (`pw-play`)** for the Find My Buds locator chime
 
-No `sudo` or `pkexec` privileges are required.
-
 ## Installation
 
 Install directly with Omarchy's plugin manager:
