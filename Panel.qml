@@ -28,6 +28,7 @@ Panel {
   readonly property var cursorRows: {
     var rows = []
     if (service.hasDevice) {
+      rows.push("feat:volume_exposure_notifications")
       rows.push("mode:active")
       rows.push("mode:aware")
       rows.push("mode:off")
@@ -137,6 +138,9 @@ Panel {
         var caseText = "Case " + service.caseBattery.level + "%"
         if (service.caseBattery.lastKnown) caseText += " (cached)"
         parts.push(caseText + " · ")
+      }
+      if (service.hearingWellness && service.hearingWellness.liveDb >= 0) {
+        parts.push(service.hearingWellness.liveDb + " dB · ")
       }
       parts.push(Model.noiseModeName(service.noiseMode) + ")")
       return parts.join("")
@@ -270,6 +274,124 @@ Panel {
 
           PanelSeparator {
             visible: service.hasBattery && service.hasDevice
+            foreground: root.foreground
+          }
+
+          // Hearing Wellness section
+          Column {
+            visible: service.hasDevice
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              text: "HEARING WELLNESS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+
+              RowLayout {
+                width: parent.width
+                spacing: Style.space(8)
+
+                Text {
+                  text: "Exposure"
+                  color: root.foreground
+                  opacity: 0.75
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  Layout.preferredWidth: Math.max(Style.space(48), implicitWidth + Style.space(8))
+                }
+
+                Rectangle {
+                  id: dbTrack
+                  Layout.fillWidth: true
+                  Layout.alignment: Qt.AlignVCenter
+                  implicitHeight: Style.space(6)
+                  radius: height / 2
+                  color: Qt.darker(root.foreground, 3.2)
+
+                  Rectangle {
+                    width: dbTrack.width * Model.dbFraction(service.hearingWellness ? service.hearingWellness.liveDb : Model.LEVEL_UNKNOWN)
+                    height: parent.height
+                    radius: parent.radius
+                    color: (service.hearingWellness && service.hearingWellness.liveDb >= 80)
+                      ? root.urgent
+                      : Color.accent
+                  }
+
+                  // 80 dB safe limit threshold marker
+                  Rectangle {
+                    x: dbTrack.width * 0.8 - 1
+                    y: -Style.space(2)
+                    width: 2
+                    height: dbTrack.height + Style.space(4)
+                    radius: 1
+                    color: root.foreground
+                    opacity: 0.45
+                  }
+                }
+
+                Text {
+                  text: Model.dbText(service.hearingWellness ? service.hearingWellness.liveDb : Model.LEVEL_UNKNOWN)
+                  color: (service.hearingWellness && service.hearingWellness.liveDb >= 80)
+                    ? root.urgent
+                    : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  horizontalAlignment: Text.AlignRight
+                  Layout.preferredWidth: Style.space(46)
+                }
+
+                Text {
+                  text: Model.hearingStatusLabel(service.hearingWellness)
+                  color: (service.hearingWellness && service.hearingWellness.liveDb >= 80)
+                    ? root.urgent
+                    : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                  Layout.preferredWidth: Math.max(Style.space(98), implicitWidth)
+                }
+              }
+
+              Text {
+                width: parent.width
+                leftPadding: Style.space(8)
+                text: {
+                  var hw = service.hearingWellness
+                  if (!hw || (hw.listeningSecsToday <= 0 && hw.avgDb < 0 && hw.weeklyAvgDb < 0)) {
+                    return "Today: No active listening recorded yet (80 dB safe limit)"
+                  }
+                  var parts = []
+                  if (hw.avgDb >= 0) parts.push("Today Avg " + hw.avgDb + " dB")
+                  if (hw.peakDb >= 0) parts.push("Peak " + hw.peakDb + " dB")
+                  if (hw.weeklyAvgDb >= 0) parts.push("7d Avg " + hw.weeklyAvgDb + " dB")
+                  if (hw.listeningSecsToday > 0) parts.push(Model.formatDurationShort(hw.listeningSecsToday))
+                  if (hw.loudSecsToday > 0) parts.push("Loud " + Model.formatDurationShort(hw.loudSecsToday))
+                  return parts.join(" · ")
+                }
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              FeatureRow {
+                width: parent.width
+                key: "volume_exposure_notifications"
+                title: "Loud Sound Alerts"
+                subtitle: "Warn when sound exposure exceeds 80 dB"
+                checked: service.volumeExposureNotifications
+              }
+            }
+          }
+
+          PanelSeparator {
+            visible: service.hasDevice
             foreground: root.foreground
           }
 

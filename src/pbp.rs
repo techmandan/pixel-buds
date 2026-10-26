@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use anyhow::{bail, Context, Result};
 use crate::lock::FileLock;
-use crate::types::{BatteryInfo, CaseBattery, CaseCache, PodBattery, SettingsInfo};
+use crate::types::{
+    BatteryInfo, CaseBattery, CaseCache, HearingWellness, HearingWellnessCache, PodBattery,
+    SettingsInfo,
+};
 
 pub fn user_home_dir() -> PathBuf {
     if let Some(home) = std::env::var_os("HOME") {
@@ -33,6 +36,7 @@ pub struct PbpClient {
     pbpctrl_bin: PathBuf,
     lock_path: PathBuf,
     case_cache_path: PathBuf,
+    hearing_cache_path: PathBuf,
 }
 
 impl PbpClient {
@@ -42,12 +46,148 @@ impl PbpClient {
 
         let lock_path = state_dir.join("pixel-buds.lock");
         let case_cache_path = state_dir.join("case_cache.json");
+        let hearing_cache_path = state_dir.join("hearing_wellness.json");
 
         Self {
             pbpctrl_bin,
             lock_path,
             case_cache_path,
+            hearing_cache_path,
         }
+    }
+
+    pub fn load_hearing_cache(&self, now: u64) -> HearingWellnessCache {
+        let day_key = now / 86400;
+        if self.hearing_cache_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&self.hearing_cache_path) {
+                if let Ok(cached) = serde_json::from_str::<HearingWellnessCache>(&data) {
+                    if cached.day_key == day_key {
+                        return cached;
+                    }
+                }
+            }
+        }
+        HearingWellnessCache {
+            day_key,
+            sample_count: 0,
+            db_sum: 0,
+            peak_db: -1,
+            hw_today_db: -1,
+            weekly_avg_db: -1,
+            daily_history: Vec::new(),
+            listening_secs_today: 0,
+            loud_secs_today: 0,
+            daily_dose_fraction: 0.0,
+        }
+    }
+
+    pub fn save_hearing_cache(&self, cache: &HearingWellnessCache) {
+        if let Ok(json) = serde_json::to_string_pretty(cache) {
+            let tmp_path = self.hearing_cache_path.with_extension("tmp");
+            if std::fs::write(&tmp_path, json).is_ok() {
+                let _ = std::fs::rename(&tmp_path, &self.hearing_cache_path);
+            }
+        }
+    }
+
+    pub fn update_daily_summary(&self, summary: &maestro::protocol::types::DosimeterSummary, now: u64) {
+        let mut cache = self.load_hearing_cache(now);
+        if summary.unknown5.is_finite() && summary.unknown5 > 1.0 {
+            let db = (summary.unknown5.log10() * 10.0).round() as i32;
+            if (20..=125).contains(&db) {
+                cache.hw_today_db = db;
+            }
+        }
+        let mut history = Vec::new();
+        let mut active_intensities = Vec::new();
+        for entry in &summary.unknown2 {
+            if entry.unknown6.is_finite() && entry.unknown6 > 1.0 {
+                let db = (entry.unknown6.log10() * 10.0).round() as i32;
+                if (20..=125).contains(&db) {
+                    history.push(db);
+                    active_intensities.push(entry.unknown6 as f64);
+                } else {
+                    history.push(0);
+                }
+            } else {
+                history.push(0);
+            }
+        }
+        if !history.is_empty() {
+            cache.daily_history = history;
+        }
+        if !active_intensities.is_empty() {
+            let mean_intensity =
+                active_intensities.iter().sum::<f64>() / active_intensities.len() as f64;
+            if mean_intensity > 1.0 {
+                cache.weekly_avg_db = (mean_intensity.log10() * 10.0).round() as i32;
+            }
+        }
+        self.save_hearing_cache(&cache);
+    }
+
+    pub fn resolve_hearing_wellness(&self, now: u64, live_db: i32) -> HearingWellness {
+        let cache = self.load_hearing_cache(now);
+        let sampled_avg = if cache.sample_count > 0 {
+            (cache.db_sum as f64 / cache.sample_count as f64).round() as i32
+        } else {
+            -1
+        };
+        let avg_db = if cache.hw_today_db >= 0 {
+            cache.hw_today_db
+        } else {
+            sampled_avg
+        };
+        let status = if live_db >= 80 {
+            "loud".to_string()
+        } else if live_db >= 75 {
+            "caution".to_string()
+        } else if live_db >= 0 {
+            "ok".to_string()
+        } else {
+            "idle".to_string()
+        };
+
+        HearingWellness {
+            live_db,
+            avg_db,
+            peak_db: cache.peak_db,
+            weekly_avg_db: cache.weekly_avg_db,
+            daily_history: cache.daily_history,
+            status,
+            listening_secs_today: cache.listening_secs_today,
+            loud_secs_today: cache.loud_secs_today,
+            daily_dose_percent: (cache.daily_dose_fraction * 100.0).round() as i32,
+        }
+    }
+
+    pub fn record_live_db(&self, intensity: f32, dt_secs: u64, now: u64) -> HearingWellness {
+        if !intensity.is_finite() || intensity <= 1.0 {
+            return self.resolve_hearing_wellness(now, -1);
+        }
+        let db = (intensity.log10() * 10.0).round() as i32;
+        if !(20..=125).contains(&db) {
+            return self.resolve_hearing_wellness(now, -1);
+        }
+
+        let mut cache = self.load_hearing_cache(now);
+        let step_secs = dt_secs.clamp(1, 5);
+        cache.sample_count += 1;
+        cache.db_sum += db as u64;
+        cache.peak_db = cache.peak_db.max(db);
+        cache.listening_secs_today += step_secs;
+        if db >= 80 {
+            cache.loud_secs_today += step_secs;
+        }
+        // WHO/ITU-T H.870 reference: 80 dB for 40h/week (~20,571s/day) with 3 dB exchange rate
+        if db >= 65 {
+            let allowed_secs = 20_571.0 * 2.0_f64.powf((80.0 - db as f64) / 3.0);
+            if allowed_secs > 0.0 {
+                cache.daily_dose_fraction += (step_secs as f64) / allowed_secs;
+            }
+        }
+        self.save_hearing_cache(&cache);
+        self.resolve_hearing_wellness(now, db)
     }
 
     pub fn load_case_cache(&self) -> Option<CaseCache> {
@@ -285,6 +425,7 @@ impl PbpClient {
                 multipoint: true,
                 gestures: true,
                 volume_eq: true,
+                volume_exposure_notifications: true,
             });
 
             (batt, "active".to_string(), sets)
@@ -309,6 +450,7 @@ impl PbpClient {
                 let (multi, _) = self.run_locked(&["get", "multipoint"]).unwrap_or_default();
                 let (gest, _) = self.run_locked(&["get", "gestures"]).unwrap_or_default();
                 let (veq, _) = self.run_locked(&["get", "volume-eq"]).unwrap_or_default();
+                let (ven, _) = self.run_locked(&["get", "volume-exposure-notifications"]).unwrap_or_default();
 
                 SettingsInfo {
                     speech_detection: speech.trim() == "true",
@@ -316,6 +458,7 @@ impl PbpClient {
                     multipoint: multi.trim() == "true",
                     gestures: gest.trim() == "true",
                     volume_eq: veq.trim() == "true",
+                    volume_exposure_notifications: ven.trim() != "false",
                 }
             };
 
@@ -336,6 +479,7 @@ impl PbpClient {
             battery,
             noise_mode,
             settings,
+            hearing_wellness: self.resolve_hearing_wellness(now, -1),
             last_updated: now,
         })
     }
@@ -362,6 +506,7 @@ impl PbpClient {
             },
             noise_mode: "off".to_string(),
             settings: SettingsInfo::default(),
+            hearing_wellness: self.resolve_hearing_wellness(now, -1),
             last_updated: now,
         }
     }
@@ -394,6 +539,9 @@ impl PbpClient {
             "multipoint" => "multipoint",
             "gestures" => "gestures",
             "volume_eq" | "volume-eq" => "volume-eq",
+            "volume_exposure_notifications" | "volume-exposure-notifications" => {
+                "volume-exposure-notifications"
+            }
             _ => bail!("Unknown setting: {}", key),
         };
 

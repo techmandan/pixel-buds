@@ -3,9 +3,9 @@
   "id": "pixel-buds",
   "name": "Pixel Buds",
   "version": "1.0.0",
-  "author": "Daniel",
+  "author": "techmandan",
   "license": "MIT",
-  "description": "Google Pixel Buds Pro 2 battery, ANC modes, conversation awareness, and controls",
+  "description": "Google Pixel Buds Pro 2 battery, Hearing Wellness, ANC modes, conversation awareness, and controls",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Pixel Buds",
-    "description": "Battery, ANC, conversation awareness, and find for Google Pixel Buds Pro 2",
+    "description": "Battery, Hearing Wellness, ANC, conversation awareness, and find for Google Pixel Buds Pro 2",
     "category": "Audio",
     "allowMultiple": false,
     "defaultSection": "right",

@@ -25,6 +25,8 @@ Item {
   property bool multipoint: false
   property bool gestures: false
   property bool volumeEq: false
+  property bool volumeExposureNotifications: true
+  property var hearingWellness: Model.defaultHearingWellness()
 
   property string lastError: ""
   property string actionStatus: ""
@@ -87,6 +89,7 @@ Item {
     combinedBattery = status.combinedBattery
 
     noiseMode = status.noiseMode
+    hearingWellness = status.hearingWellness || Model.defaultHearingWellness()
 
     if (status.settings) {
       speechDetection = status.settings.speech_detection === true
@@ -94,6 +97,7 @@ Item {
       multipoint = status.settings.multipoint === true
       gestures = status.settings.gestures === true
       volumeEq = status.settings.volume_eq === true
+      volumeExposureNotifications = status.settings.volume_exposure_notifications !== false
     }
   }
 
@@ -127,6 +131,7 @@ Item {
     else if (key === "multipoint") curVal = multipoint
     else if (key === "gestures") curVal = gestures
     else if (key === "volume_eq") curVal = volumeEq
+    else if (key === "volume_exposure_notifications") curVal = volumeExposureNotifications
 
     var newVal = !curVal
     if (key === "speech_detection") speechDetection = newVal
@@ -134,6 +139,7 @@ Item {
     else if (key === "multipoint") multipoint = newVal
     else if (key === "gestures") gestures = newVal
     else if (key === "volume_eq") volumeEq = newVal
+    else if (key === "volume_exposure_notifications") volumeExposureNotifications = newVal
 
     _sendCmd(["set", key, newVal ? "true" : "false"])
   }

@@ -98,6 +98,9 @@ fn main() -> Result<()> {
                                 "multipoint" => curr.settings.multipoint = val_bool,
                                 "gestures" => curr.settings.gestures = val_bool,
                                 "volume_eq" => curr.settings.volume_eq = val_bool,
+                                "volume_exposure_notifications" => {
+                                    curr.settings.volume_exposure_notifications = val_bool
+                                }
                                 _ => {}
                             }
                             let _ = daemon.write_status(&curr);

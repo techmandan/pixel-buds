@@ -18,7 +18,7 @@ use maestro::protocol::types::{settings_rsp, OobeAction, RuntimeInfo, SettingsRs
 use maestro::protocol::utils;
 use maestro::pwrpc::client::{Client, ClientHandle};
 use maestro::service::settings::{self, AncState, SettingValue};
-use maestro::service::MaestroService;
+use maestro::service::{DosimeterService, MaestroService};
 
 use crate::media::MediaController;
 use crate::pbp::PbpClient;
@@ -410,7 +410,9 @@ impl Daemon {
                                 multipoint: true,
                                 gestures: true,
                                 volume_eq: true,
+                                volume_exposure_notifications: true,
                             },
+                            hearing_wellness: self.client.resolve_hearing_wellness(now, -1),
                             last_updated: now,
                         };
                         self.update_status(&shared_status, status);
@@ -456,7 +458,8 @@ impl Daemon {
         maestro::pwrpc::Error: From<E>,
         maestro::pwrpc::Error: From<S::Error>,
     {
-        let mut service = MaestroService::new(handle, channel);
+        let mut service = MaestroService::new(handle.clone(), channel);
+        let mut dosimeter = DosimeterService::new(handle, channel);
 
         let task = async {
             let combined = self.client.get_bluez_battery(mac).unwrap_or(-1);
@@ -485,6 +488,10 @@ impl Daemon {
                 .unwrap_or(true);
             let volume_eq = service
                 .read_setting(settings::id::VolumeEqEnable)
+                .await
+                .unwrap_or(true);
+            let volume_exposure_notifications = service
+                .read_setting(settings::id::VolumeExposureNotifications)
                 .await
                 .unwrap_or(true);
 
@@ -517,15 +524,28 @@ impl Daemon {
                     multipoint,
                     gestures,
                     volume_eq,
+                    volume_exposure_notifications,
                 },
+                hearing_wellness: self.client.resolve_hearing_wellness(now, -1),
                 last_updated: now,
             };
 
             let mut rt_call = service.subscribe_to_runtime_info()?;
             let mut oobe_call = service.subscribe_to_oobe_actions()?;
             let mut set_call = service.subscribe_to_settings_changes()?;
+            let mut db_call = dosimeter.subscribe_to_live_db().ok();
+
+            if let Ok(summary) = dosimeter.fetch_daily_summaries().await {
+                self.client.update_daily_summary(&summary, now_secs());
+                curr_status.hearing_wellness = self.client.resolve_hearing_wellness(now_secs(), -1);
+                self.update_status(shared_status, curr_status.clone());
+            }
 
             let mut resume_deadline: Option<tokio::time::Instant> = None;
+            let mut last_db_sample_at: Option<tokio::time::Instant> = None;
+            let mut loud_since: Option<tokio::time::Instant> = None;
+            let mut last_loud_notify_at: Option<tokio::time::Instant> = None;
+
             let mut oobe_interval = tokio::time::interval_at(
                 tokio::time::Instant::now() + OOBE_POLL_INTERVAL,
                 OOBE_POLL_INTERVAL,
@@ -542,6 +562,7 @@ impl Daemon {
                 let mut rt_stream = rt_call.stream();
                 let mut oobe_stream = oobe_call.stream();
                 let mut set_stream = set_call.stream();
+                let mut db_stream = db_call.as_mut().map(|c| c.stream());
 
                 let resume_sleep = async {
                     if let Some(deadline) = resume_deadline {
@@ -589,6 +610,58 @@ impl Daemon {
                             self.update_status(shared_status, curr_status.clone());
                         }
                     }
+                    db_item = async {
+                        if let Some(ref mut s) = db_stream {
+                            s.next().await
+                        } else {
+                            futures::future::pending().await
+                        }
+                    } => {
+                        match db_item {
+                            Some(Ok(msg)) => {
+                                let now_inst = tokio::time::Instant::now();
+                                let dt = last_db_sample_at
+                                    .map(|prev| now_inst.saturating_duration_since(prev).as_secs().max(1))
+                                    .unwrap_or(1);
+                                last_db_sample_at = Some(now_inst);
+                                let now_ts = now_secs();
+                                let hw = self.client.record_live_db(msg.intensity, dt, now_ts);
+                                if hw.live_db >= 80 {
+                                    let start = *loud_since.get_or_insert(now_inst);
+                                    if curr_status.settings.volume_exposure_notifications
+                                        && now_inst.saturating_duration_since(start) >= Duration::from_secs(15)
+                                        && last_loud_notify_at
+                                            .map(|t| now_inst.saturating_duration_since(t) >= Duration::from_secs(300))
+                                            .unwrap_or(true)
+                                    {
+                                        last_loud_notify_at = Some(now_inst);
+                                        let _ = std::process::Command::new("notify-send")
+                                            .args([
+                                                "-a",
+                                                "Pixel Buds",
+                                                "-u",
+                                                "normal",
+                                                "Hearing Wellness Alert",
+                                                &format!(
+                                                    "Current sound exposure is {} dB (above 80 dB safe threshold).",
+                                                    hw.live_db
+                                                ),
+                                            ])
+                                            .spawn();
+                                    }
+                                } else {
+                                    loud_since = None;
+                                }
+                                curr_status.hearing_wellness = hw;
+                                curr_status.last_updated = now_ts;
+                                self.update_status(shared_status, curr_status.clone());
+                            }
+                            _ => {
+                                drop(db_stream);
+                                db_call = None;
+                            }
+                        }
+                    }
                     _ = oobe_interval.tick() => {
                         drop(oobe_call);
                         oobe_call = service.subscribe_to_oobe_actions()?;
@@ -600,6 +673,21 @@ impl Daemon {
                             if any_in_ear {
                                 media.snapshot_playing();
                             }
+                        }
+                        if db_stream.is_none() {
+                            drop(db_stream);
+                            db_call = dosimeter.subscribe_to_live_db().ok();
+                        }
+                        if last_db_sample_at
+                            .map(|t| t.elapsed() >= Duration::from_secs(4))
+                            .unwrap_or(false)
+                            && curr_status.hearing_wellness.live_db >= 0
+                        {
+                            loud_since = None;
+                            let now_ts = now_secs();
+                            curr_status.hearing_wellness = self.client.resolve_hearing_wellness(now_ts, -1);
+                            curr_status.last_updated = now_ts;
+                            self.update_status(shared_status, curr_status.clone());
                         }
                     }
                     _ = resume_sleep => {
@@ -613,12 +701,24 @@ impl Daemon {
                         }
                     }
                     _ = bluez_interval.tick() => {
+                        let mut changed = false;
+                        if let Ok(summary) = dosimeter.fetch_daily_summaries().await {
+                            let now_ts = now_secs();
+                            self.client.update_daily_summary(&summary, now_ts);
+                            curr_status.hearing_wellness = self
+                                .client
+                                .resolve_hearing_wellness(now_ts, curr_status.hearing_wellness.live_db);
+                            changed = true;
+                        }
                         if let Some(c) = self.client.get_bluez_battery(mac) {
                             if c != curr_status.battery.combined {
                                 curr_status.battery.combined = c;
-                                curr_status.last_updated = now_secs();
-                                self.update_status(shared_status, curr_status.clone());
+                                changed = true;
                             }
+                        }
+                        if changed {
+                            curr_status.last_updated = now_secs();
+                            self.update_status(shared_status, curr_status.clone());
                         }
                     }
                     Some(cmd) = ctrl_rx.recv() => {
@@ -656,6 +756,9 @@ impl Daemon {
                                         "multipoint" => curr_status.settings.multipoint = value,
                                         "gestures" => curr_status.settings.gestures = value,
                                         "volume_eq" => curr_status.settings.volume_eq = value,
+                                        "volume_exposure_notifications" => {
+                                            curr_status.settings.volume_exposure_notifications = value
+                                        }
                                         _ => {}
                                     }
                                     curr_status.last_updated = now_secs();
@@ -853,6 +956,9 @@ impl Daemon {
             SettingValue::VolumeEqEnable(v) => {
                 status.settings.volume_eq = v;
             }
+            SettingValue::VolumeExposureNotifications(v) => {
+                status.settings.volume_exposure_notifications = v;
+            }
             _ => return false,
         }
 
@@ -934,6 +1040,7 @@ async fn set_setting_on_service(service: &mut MaestroService, key: &str, val: bo
         "multipoint" => SettingValue::MultipointEnable(val),
         "gestures" => SettingValue::GestureEnable(val),
         "volume_eq" => SettingValue::VolumeEqEnable(val),
+        "volume_exposure_notifications" => SettingValue::VolumeExposureNotifications(val),
         _ => bail!("Unknown setting: {}", key),
     };
     service

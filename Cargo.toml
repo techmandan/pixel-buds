@@ -1,6 +1,6 @@
 [package]
 name = "pixel-buds"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 authors = ["Tech Man Dan <dan.inman@hotmail.co.uk>"]
 description = "Native Rust status bridge and controller for Google Pixel Buds Pro 2 on Omarchy"

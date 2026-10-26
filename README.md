@@ -2,9 +2,12 @@
 
 A native system integration plugin for Google Pixel Buds Pro 2 on Omarchy / Quickshell.
 
+![Pixel Buds Panel Preview](preview.png)
+
 ## Features
 - **Top Bar Integration**: Adaptive themed vector icon matching native system icon style.
 - **Battery Telemetry**: Real-time Left Pod, Right Pod, and Case battery levels (with 4-hour last-known case caching).
+- **Hearing Wellness**: Live sound exposure meter (in dB) streamed from the earbuds' hardware dosimeter, 80 dB safe-limit indicator, daily/7-day average & peak dB summary, and Loud Sound Alerts toggle (`volume_exposure_notifications`).
 - **In-Ear Detection (Auto-Pause / Auto-Resume)**: Automatically pauses active media playback when an earbud is removed and resumes playback when placed back in the ear.
 - **Noise Control**: Active Noise Cancellation (ANC), Transparency, and Off switching / cycling.
 - **Bud Settings**: Toggle Conversation Detection, In-Ear Detection, Multipoint Audio, Touch Gestures, and Volume EQ.
