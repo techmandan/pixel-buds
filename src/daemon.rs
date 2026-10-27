@@ -1,4 +1,6 @@
+use std::fs::Permissions;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -82,7 +84,7 @@ impl Daemon {
             .unwrap_or_else(|_| crate::pbp::user_home_dir().join(".local/state"));
 
         let state_dir = state_home.join("pixel-buds");
-        let _ = std::fs::create_dir_all(&state_dir);
+        crate::pbp::ensure_private_state_dir(&state_dir);
         let status_path = state_dir.join("status.json");
         let sock_path = state_dir.join("daemon.sock");
         let client = PbpClient::new(&state_dir);
@@ -119,13 +121,14 @@ impl Daemon {
 
     pub fn write_status(&self, status: &PluginStatus) -> Result<()> {
         let json = serde_json::to_string_pretty(status)?;
-        let tmp_path = self.status_path.with_extension("tmp");
-        std::fs::write(&tmp_path, json)?;
-        std::fs::rename(&tmp_path, &self.status_path)?;
+        crate::pbp::write_private_atomic(&self.status_path, json.as_bytes())?;
         Ok(())
     }
 
     pub fn read_status_file(&self) -> Option<PluginStatus> {
+        if self.status_path.exists() {
+            let _ = std::fs::set_permissions(&self.status_path, Permissions::from_mode(0o600));
+        }
         let data = std::fs::read_to_string(&self.status_path).ok()?;
         serde_json::from_str(&data).ok()
     }
@@ -158,9 +161,13 @@ impl Daemon {
     }
 
     async fn run_async_loop(&self) -> Result<()> {
+        if let Some(parent) = self.sock_path.parent() {
+            crate::pbp::ensure_private_state_dir(parent);
+        }
         let _ = std::fs::remove_file(&self.sock_path);
         let listener = UnixListener::bind(&self.sock_path)
             .with_context(|| format!("Failed to bind {:?}", self.sock_path))?;
+        let _ = std::fs::set_permissions(&self.sock_path, Permissions::from_mode(0o600));
 
         let initial_status = self
             .read_status_file()

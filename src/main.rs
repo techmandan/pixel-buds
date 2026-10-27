@@ -12,8 +12,8 @@ use find::Finder;
 
 #[derive(Parser)]
 #[command(name = "pixel-buds")]
-#[command(author = "Tech Man Dan <dan.inman@hotmail.co.uk>")]
-#[command(version = "0.1.0")]
+#[command(author = "techmandan")]
+#[command(version = "1.0.1")]
 #[command(about = "Native Rust status bridge and controller for Google Pixel Buds Pro 2 on Omarchy")]
 struct Cli {
     #[command(subcommand)]

@@ -1,5 +1,6 @@
-use std::fs::File;
+use std::fs::{File, OpenOptions, Permissions};
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
@@ -14,9 +15,15 @@ pub struct Finder {
 
 impl Finder {
     pub fn new() -> Self {
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        let base_dir = std::env::var("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"));
+            .unwrap_or_else(|_| {
+                std::env::var("XDG_STATE_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| crate::pbp::user_home_dir().join(".local/state"))
+            });
+        let runtime_dir = base_dir.join("pixel-buds");
+        crate::pbp::ensure_private_state_dir(&runtime_dir);
 
         Self {
             pid_file: runtime_dir.join("pixel-buds-find.pid"),
@@ -89,13 +96,15 @@ impl Finder {
         }
 
         if !paused_players.is_empty() {
-            let mut file = std::fs::OpenOptions::new()
+            let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
+                .mode(0o600)
                 .open(&self.players_file)
                 .ok();
 
             if let Some(f) = file.as_mut() {
+                let _ = f.set_permissions(Permissions::from_mode(0o600));
                 for p in paused_players {
                     let _ = writeln!(f, "{}", p);
                 }
@@ -202,6 +211,7 @@ impl Finder {
         }
 
         writer.finalize().context("Failed to finalize wav writer")?;
+        let _ = std::fs::set_permissions(&self.wav_file, Permissions::from_mode(0o600));
         Ok(())
     }
 
@@ -215,7 +225,7 @@ impl Finder {
         self.stop();
         self.pause_playback();
 
-        let _ = std::fs::write(&self.sink_file, &sink);
+        let _ = crate::pbp::write_private_atomic(&self.sink_file, sink.as_bytes());
         self.generate_wav(&side)?;
 
         let mut child = Command::new("paplay")
@@ -229,7 +239,7 @@ impl Finder {
             .context("Failed to run paplay")?;
 
         let pid = child.id();
-        let _ = std::fs::write(&self.pid_file, pid.to_string());
+        let _ = crate::pbp::write_private_atomic(&self.pid_file, pid.to_string().as_bytes());
 
         // Wait for child in background or synchronously
         let _ = child.wait();

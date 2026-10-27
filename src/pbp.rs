@@ -1,4 +1,7 @@
 use std::ffi::CStr;
+use std::fs::{DirBuilder, OpenOptions, Permissions};
+use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use anyhow::{bail, Context, Result};
@@ -7,6 +10,51 @@ use crate::types::{
     BatteryInfo, CaseBattery, CaseCache, HearingWellness, HearingWellnessCache, PodBattery,
     SettingsInfo,
 };
+
+pub fn ensure_private_state_dir(state_dir: &Path) {
+    let mut builder = DirBuilder::new();
+    builder.recursive(true).mode(0o700);
+    let _ = builder.create(state_dir);
+    let _ = std::fs::set_permissions(state_dir, Permissions::from_mode(0o700));
+
+    if let Ok(entries) = std::fs::read_dir(state_dir) {
+        for entry in entries.flatten() {
+            if let Ok(ft) = entry.file_type() {
+                if !ft.is_symlink() && !ft.is_dir() {
+                    let _ = std::fs::set_permissions(entry.path(), Permissions::from_mode(0o600));
+                }
+            }
+        }
+    }
+}
+
+pub fn write_private_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        ensure_private_state_dir(parent);
+    }
+    let tmp_path = path.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp_path);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp_path)
+        .or_else(|_| {
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)
+        })?;
+    file.set_permissions(Permissions::from_mode(0o600))?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp_path, path)?;
+    std::fs::set_permissions(path, Permissions::from_mode(0o600))?;
+    Ok(())
+}
 
 pub fn user_home_dir() -> PathBuf {
     if let Some(home) = std::env::var_os("HOME") {
@@ -41,6 +89,7 @@ pub struct PbpClient {
 
 impl PbpClient {
     pub fn new(state_dir: &Path) -> Self {
+        ensure_private_state_dir(state_dir);
         let pbpctrl_bin = which::which("pbpctrl")
             .unwrap_or_else(|_| user_home_dir().join(".cargo/bin/pbpctrl"));
 
@@ -59,6 +108,7 @@ impl PbpClient {
     pub fn load_hearing_cache(&self, now: u64) -> HearingWellnessCache {
         let day_key = now / 86400;
         if self.hearing_cache_path.exists() {
+            let _ = std::fs::set_permissions(&self.hearing_cache_path, Permissions::from_mode(0o600));
             if let Ok(data) = std::fs::read_to_string(&self.hearing_cache_path) {
                 if let Ok(cached) = serde_json::from_str::<HearingWellnessCache>(&data) {
                     if cached.day_key == day_key {
@@ -83,10 +133,7 @@ impl PbpClient {
 
     pub fn save_hearing_cache(&self, cache: &HearingWellnessCache) {
         if let Ok(json) = serde_json::to_string_pretty(cache) {
-            let tmp_path = self.hearing_cache_path.with_extension("tmp");
-            if std::fs::write(&tmp_path, json).is_ok() {
-                let _ = std::fs::rename(&tmp_path, &self.hearing_cache_path);
-            }
+            let _ = write_private_atomic(&self.hearing_cache_path, json.as_bytes());
         }
     }
 
@@ -194,6 +241,7 @@ impl PbpClient {
         if !self.case_cache_path.exists() {
             return None;
         }
+        let _ = std::fs::set_permissions(&self.case_cache_path, Permissions::from_mode(0o600));
         let data = std::fs::read_to_string(&self.case_cache_path).ok()?;
         serde_json::from_str(&data).ok()
     }
@@ -247,10 +295,7 @@ impl PbpClient {
         };
 
         if let Ok(json) = serde_json::to_string_pretty(&cache) {
-            let tmp_path = self.case_cache_path.with_extension("tmp");
-            if std::fs::write(&tmp_path, json).is_ok() {
-                let _ = std::fs::rename(&tmp_path, &self.case_cache_path);
-            }
+            let _ = write_private_atomic(&self.case_cache_path, json.as_bytes());
         }
     }
 
